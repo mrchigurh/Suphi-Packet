@@ -10,7 +10,7 @@ return {
 	end,
 	
 	Write = function(cursor: Cursor.Cursor, value: Vector2)
-		cursor:Allocate(6)
+		cursor:Allocate(4)
 		cursor:WriteS2(value.X + 0.5)
 		cursor:WriteS2(value.Y + 0.5)
 	end,

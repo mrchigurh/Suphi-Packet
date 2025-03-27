@@ -1,5 +1,5 @@
 --!strict
--- Version: 1.0
+-- Version: 1.2
 
 
 -- Requires
@@ -40,7 +40,6 @@ local packets = {}			:: {[string | number]: Packet<...any, ...any>}
 local playerCursors			: {[Player]: Cursor.Cursor}
 local playerThreads			: {[Player]: {[number]: {Yielded: thread, Timeout: thread}, Index: number}}
 local playerBytes			: {[Player]: number}
-local playerError			: {[Player]: boolean}
 local threads				: {[number]: {Yielded: thread, Timeout: thread}, Index: number}
 local packetCounter			: number
 local cursor = Cursor()
@@ -298,7 +297,6 @@ if RunService:IsServer() then
 	playerCursors = {}
 	playerThreads = {}
 	playerBytes = {}
-	playerError = {}
 	packetCounter = 0
 	local remoteEvent = Instance.new("RemoteEvent", script)
 
@@ -325,9 +323,9 @@ if RunService:IsServer() then
 		end
 	end)
 
-	local Respond = function(packet: Packet, player: Player, index: number, ...)
-		if packet.OnServerInvoke == nil then error(`OnServerInvoke not found for packet: {packet.Name}`) end
-		local values = {packet.OnServerInvoke(player, ...)}
+	local respond = function(packet: Packet, player: Player, index: number, ...)
+		local values = {(packet :: any).OnServerInvoke(player, ...)}
+		-- Warning: enabling this comment can help exploiters DDoS
 		--if TypeCheckParameters(packet.ResponseParameters, values) == false then error(`Response parameters did not match packet: '{packet.Name}'`) end
 		if player.Parent == nil then return end
 		local cursor = playerCursors[player]
@@ -340,11 +338,12 @@ if RunService:IsServer() then
 		cursor.Index += 1
 		SerializeParameters(cursor, packet.ResponseParameters, values)
 	end
-
-	remoteEvent.OnServerEvent:Connect(function(player: Player, receivedBuffer: buffer, instances: {Instance}?)
+	
+	local onServerEvent = function(player: Player, receivedBuffer: buffer, instances: {Instance}?)
 		local bytes = (playerBytes[player] or 0) + buffer.len(receivedBuffer)
-		if bytes > 8_000 then if playerError[player] then return else playerError[player] = true error(`{player.Name} is exceeding the data limit; some events may be dropped`) end end
+		if bytes > 8_000 then return "is exceeding the data limit; some events may be dropped" end
 		playerBytes[player] = bytes
+		local warning = nil
 		local cursor = Cursor(receivedBuffer, instances)
 		while cursor.Index < cursor.Length do
 			local packet = packets[cursor:ReadU1()]
@@ -354,27 +353,37 @@ if RunService:IsServer() then
 				local index = buffer.readbits(cursor.Buffer, offset + 1, 7)
 				cursor.Index += 1
 				if response == 0 then
-					Task:Defer(Respond, packet, player, index, DeserializeParameters(cursor, packet.Parameters))
+					if packet.OnServerInvoke then
+						Task:Spawn(respond, packet, player, index, DeserializeParameters(cursor, packet.Parameters))
+					else
+						warning = `OnServerInvoke not found for packet: {packet.Name} discarding event: {DeserializeParameters(cursor, packet.Parameters)}`
+					end
 				else
 					local threads = playerThreads[player][index]
-					if coroutine.status(threads.Yielded) == "suspended" then
+					if threads then
 						task.cancel(threads.Timeout)
 						task.defer(threads.Yielded, DeserializeParameters(cursor, packet.ResponseParameters))
+						playerThreads[player][index] = nil
 					else
-						warn("Response thread not found for packet:", packet.Name, "discarding response:", DeserializeParameters(cursor, packet.ResponseParameters))
+						warning = `Response thread not found for packet: {packet.Name} discarding response: {DeserializeParameters(cursor, packet.ResponseParameters)}`
 					end
 				end
 			else
 				packet.OnServerEvent:Fire(player, DeserializeParameters(cursor, packet.Parameters))
 			end
 		end
+		return warning
+	end
+
+	remoteEvent.OnServerEvent:Connect(function(player: Player, ...)
+		local success, warning = pcall(onServerEvent, player, ...)
+		if warning and RunService:IsStudio() then warn(player.Name, warning) end
 	end)
 
 	PlayersService.PlayerRemoving:Connect(function(player)
 		playerCursors[player] = nil
 		playerThreads[player] = nil
 		playerBytes[player] = nil
-		playerError[player] = nil
 	end)
 
 	RunService.Heartbeat:Connect(function() task.defer(thread) end)
@@ -396,9 +405,8 @@ else
 		end
 	end)
 
-	local Respond = function(packet: Packet, index: number, ...)
-		if packet.OnClientInvoke == nil then error(`OnClientInvoke not found for packet: {packet.Name}`) end
-		local values = {packet.OnClientInvoke(...)}
+	local respond = function(packet: Packet, index: number, ...)
+		local values = {(packet :: any).OnClientInvoke(...)}
 		--if TypeCheckParameters(packet.ResponseParameters, values) == false then error(`Response parameters did not match packet: '{packet.Name}'`) end
 		cursor:Allocate(2)
 		cursor:WriteU1(packet.Id)
@@ -419,12 +427,17 @@ else
 				local index = buffer.readbits(cursor.Buffer, offset + 1, 7)
 				cursor.Index += 1
 				if response == 0 then
-					Task:Defer(Respond, packet, index, DeserializeParameters(cursor, packet.Parameters))
+					if packet.OnClientInvoke then
+						Task:Spawn(respond, packet, index, DeserializeParameters(cursor, packet.Parameters))
+					else
+						warn("OnClientInvoke not found for packet:", packet.Name, "discarding event:", DeserializeParameters(cursor, packet.Parameters))
+					end
 				else
 					local threads = threads[index]
-					if coroutine.status(threads.Yielded) == "suspended" then
+					if threads then
 						task.cancel(threads.Timeout)
 						task.defer(threads.Yielded, DeserializeParameters(cursor, packet.ResponseParameters))
+						threads[index] = nil
 					else
 						warn("Response thread not found for packet:", packet.Name, "discarding response:", DeserializeParameters(cursor, packet.ResponseParameters))
 					end
