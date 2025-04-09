@@ -12,13 +12,13 @@ export type Task = {
 
 -- Varables
 local Call, Thread
-local threads = {}
-
 local Task = {}				:: Task
-Task.Type = "Task"
+local threads = {}			:: {thread}
 
 
 -- Task
+Task.Type = "Task"
+
 function Task:Spawn(func, ...)
 	return task.spawn(table.remove(threads) or task.spawn(Thread), func, ...)
 end
@@ -41,5 +41,6 @@ end
 function Thread()
 	while true do Call(coroutine.yield()) end
 end
+
 
 return Task

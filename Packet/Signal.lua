@@ -29,12 +29,7 @@ export type Connection<A... = ()> = {
 
 -- Varables
 local Signal = {}			:: Signal<...any>
-Signal["__index"] = Signal
-Signal.Type = "Signal"
-
 local Connection = {}		:: Connection<...any>
-Connection["__index"] = Connection
-Connection.Type = "Connection"
 
 
 -- Constructor
@@ -47,6 +42,9 @@ end
 
 
 -- Signal
+Signal["__index"] = Signal
+Signal.Type = "Signal"
+
 function Signal:Connect(func)
 	local connection = (setmetatable({}, Connection) :: any) :: Connection
 	connection.Previous = self.Previous
@@ -91,9 +89,13 @@ end
 
 
 -- Connection
+Connection["__index"] = Connection
+Connection.Type = "Connection"
+
 function Connection:Disconnect()
 	self.Previous.Next = self.Next
 	self.Next.Previous = self.Previous
 end
+
 
 return Constructor
