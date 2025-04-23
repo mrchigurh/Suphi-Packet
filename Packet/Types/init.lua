@@ -1,6 +1,23 @@
 --!strict
 --!optimize 2
 
+--[[
+	S8		Minimum: -128			Maximum: 127
+	S16		Minimum: -32768			Maximum: 32767
+	S24		Minimum: -8388608		Maximum: 8388607
+	S32		Minimum: -2147483648	Maximum: 2147483647
+
+	U8		Minimum: 0				Maximum: 255
+	U16		Minimum: 0				Maximum: 65535
+	U24		Minimum: 0				Maximum: 16777215
+	U32		Minimum: 0				Maximum: 4294967295
+
+	F16		±2048					[65520]
+	F24		±262144					[4294959104]
+	F32		±16777216				[170141183460469231731687303715884105728]
+	F64		±9007199254740992		[huge]
+]]
+
 
 -- Types
 export type Cursor = {
@@ -203,9 +220,17 @@ types.String = ("String" :: any) :: string
 reads.String = function() return ReadString(ReadU8()) end
 writes.String = function(value: string) local length = #value Allocate(1 + length) WriteU8(length) WriteString(value) end
 
+types.StringLong = ("StringLong" :: any) :: string
+reads.StringLong = function() return ReadString(ReadU16()) end
+writes.StringLong = function(value: string) local length = #value Allocate(2 + length) WriteU16(length) WriteString(value) end
+
 types.Buffer = ("Buffer" :: any) :: buffer
 reads.Buffer = function() return ReadBuffer(ReadU8()) end
 writes.Buffer = function(value: buffer) local length = buffer.len(value) Allocate(1 + length) WriteU8(length) WriteBuffer(value) end
+
+types.BufferLong = ("BufferLong" :: any) :: buffer
+reads.BufferLong = function() return ReadBuffer(ReadU16()) end
+writes.BufferLong = function(value: buffer) local length = buffer.len(value) Allocate(2 + length) WriteU16(length) WriteBuffer(value) end
 
 types.Instance = ("Instance" :: any) :: Instance
 reads.Instance = function() return ReadInstance() end
@@ -229,11 +254,11 @@ writes.Color3 = function(value: Color3) Allocate(3) WriteU8(value.R * 255 + 0.5)
 
 types.UDim = ("UDim" :: any) :: UDim
 reads.UDim = function() return UDim.new(ReadS16() / 1000, ReadS16()) end
-writes.UDim = function(value: UDim) Allocate(4) WriteS16(value.Scale * 1000 + 0.5) WriteS16(value.Offset) end
+writes.UDim = function(value: UDim) Allocate(4) WriteS16(value.Scale * 1000) WriteS16(value.Offset) end
 
 types.UDim2 = ("UDim2" :: any) :: UDim2
 reads.UDim2 = function() return UDim2.new(ReadS16() / 1000, ReadS16(), ReadS16() / 1000, ReadS16()) end
-writes.UDim2 = function(value: UDim2) Allocate(8) WriteS16(value.X.Scale * 1000 + 0.5) WriteS16(value.X.Offset) WriteS16(value.Y.Scale * 1000 + 0.5) WriteS16(value.Y.Offset) end
+writes.UDim2 = function(value: UDim2) Allocate(8) WriteS16(value.X.Scale * 1000) WriteS16(value.X.Offset) WriteS16(value.Y.Scale * 1000) WriteS16(value.Y.Offset) end
 
 types.Rect = ("Rect" :: any) :: Rect
 reads.Rect = function() return Rect.new(ReadF32(), ReadF32(), ReadF32(), ReadF32()) end
@@ -241,7 +266,7 @@ writes.Rect = function(value: Rect) Allocate(16) WriteF32(value.Min.X) WriteF32(
 
 types.Vector2S16 = ("Vector2S16" :: any) :: Vector2
 reads.Vector2S16 = function() return Vector2.new(ReadS16(), ReadS16()) end
-writes.Vector2S16 = function(value: Vector2) Allocate(4) WriteS16(value.X + 0.5) WriteS16(value.Y + 0.5) end
+writes.Vector2S16 = function(value: Vector2) Allocate(4) WriteS16(value.X) WriteS16(value.Y) end
 
 types.Vector2F24 = ("Vector2F24" :: any) :: Vector2
 reads.Vector2F24 = function() return Vector2.new(ReadF24(), ReadF24()) end
@@ -253,7 +278,7 @@ writes.Vector2F32 = function(value: Vector2) Allocate(8) WriteF32(value.X) Write
 
 types.Vector3S16 = ("Vector3S16" :: any) :: Vector3
 reads.Vector3S16 = function() return Vector3.new(ReadS16(), ReadS16(), ReadS16()) end
-writes.Vector3S16 = function(value: Vector3) Allocate(6) WriteS16(value.X + 0.5) WriteS16(value.Y + 0.5) WriteS16(value.Z + 0.5) end
+writes.Vector3S16 = function(value: Vector3) Allocate(6) WriteS16(value.X) WriteS16(value.Y) WriteS16(value.Z) end
 
 types.Vector3F24 = ("Vector3F24" :: any) :: Vector3
 reads.Vector3F24 = function() return Vector3.new(ReadF24(), ReadF24(), ReadF24()) end
@@ -495,6 +520,7 @@ anyReads[6] = function() return ReadU16() end
 anyReads[7] = function() return ReadU24() end
 anyReads[8] = function() return ReadU32() end
 anyReads[9] = function() return ReadF32() end
+anyReads[10] = function() return ReadF64() end
 anyWrites.number = function(value: number)
 	if value % 1 == 0 then
 		if value < 0 then
@@ -504,8 +530,10 @@ anyWrites.number = function(value: number)
 				Allocate(3) WriteU8(2) WriteU16(-value)
 			elseif value > -16777216 then
 				Allocate(4) WriteU8(3) WriteU24(-value)
-			else
+			elseif value > -4294967296 then
 				Allocate(5) WriteU8(4) WriteU32(-value)
+			else
+				Allocate(9) WriteU8(10) WriteF64(value)
 			end
 		else
 			if value < 256 then
@@ -514,64 +542,68 @@ anyWrites.number = function(value: number)
 				Allocate(3) WriteU8(6) WriteU16(value)
 			elseif value < 16777216 then
 				Allocate(4) WriteU8(7) WriteU24(value)
-			else
+			elseif value < 4294967296 then
 				Allocate(5) WriteU8(8) WriteU32(value)
+			else
+				Allocate(9) WriteU8(10) WriteF64(value)
 			end
 		end
-	else
+	elseif value > -1048576 and value < 1048576 then
 		Allocate(5) WriteU8(9) WriteF32(value)
+	else
+		Allocate(9) WriteU8(10) WriteF64(value)
 	end
 end
 
-anyReads[10] = function() return ReadString(ReadU8()) end
-anyWrites.string = function(value: string) local length = #value Allocate(2 + length) WriteU8(10) WriteU8(length) WriteString(value) end
+anyReads[11] = function() return ReadString(ReadU8()) end
+anyWrites.string = function(value: string) local length = #value Allocate(2 + length) WriteU8(11) WriteU8(length) WriteString(value) end
 
-anyReads[11] = function() return ReadBuffer(ReadU8()) end
-anyWrites.buffer = function(value: buffer) local length = buffer.len(value) Allocate(2 + length) WriteU8(11) WriteU8(length) WriteBuffer(value) end
+anyReads[12] = function() return ReadBuffer(ReadU8()) end
+anyWrites.buffer = function(value: buffer) local length = buffer.len(value) Allocate(2 + length) WriteU8(12) WriteU8(length) WriteBuffer(value) end
 
-anyReads[12] = function() return ReadInstance() end
-anyWrites.Instance = function(value: Instance) Allocate(1) WriteU8(12) WriteInstance(value) end
+anyReads[13] = function() return ReadInstance() end
+anyWrites.Instance = function(value: Instance) Allocate(1) WriteU8(13) WriteInstance(value) end
 
-anyReads[13] = function() return ReadU8() == 1 end
-anyWrites.boolean = function(value: boolean) Allocate(2) WriteU8(13) WriteU8(if value then 1 else 0) end
+anyReads[14] = function() return ReadU8() == 1 end
+anyWrites.boolean = function(value: boolean) Allocate(2) WriteU8(14) WriteU8(if value then 1 else 0) end
 
-anyReads[14] = function() return NumberRange.new(ReadF32(), ReadF32()) end
-anyWrites.NumberRange = function(value: NumberRange) Allocate(9) WriteU8(14) WriteF32(value.Min) WriteF32(value.Max) end
+anyReads[15] = function() return NumberRange.new(ReadF32(), ReadF32()) end
+anyWrites.NumberRange = function(value: NumberRange) Allocate(9) WriteU8(15) WriteF32(value.Min) WriteF32(value.Max) end
 
-anyReads[15] = function() return BrickColor.new(ReadU16()) end
-anyWrites.BrickColor = function(value: BrickColor) Allocate(3) WriteU8(15) WriteU16(value.Number) end
+anyReads[16] = function() return BrickColor.new(ReadU16()) end
+anyWrites.BrickColor = function(value: BrickColor) Allocate(3) WriteU8(16) WriteU16(value.Number) end
 
-anyReads[16] = function() return Color3.fromRGB(ReadU8(), ReadU8(), ReadU8()) end
-anyWrites.Color3 = function(value: Color3) Allocate(4) WriteU8(16) WriteU8(value.R * 255 + 0.5)  WriteU8(value.G * 255 + 0.5)  WriteU8(value.B * 255 + 0.5) end
+anyReads[17] = function() return Color3.fromRGB(ReadU8(), ReadU8(), ReadU8()) end
+anyWrites.Color3 = function(value: Color3) Allocate(4) WriteU8(17) WriteU8(value.R * 255 + 0.5)  WriteU8(value.G * 255 + 0.5)  WriteU8(value.B * 255 + 0.5) end
 
-anyReads[17] = function() return UDim.new(ReadS16() / 1000, ReadS16()) end
-anyWrites.UDim = function(value: UDim) Allocate(5) WriteU8(17) WriteS16(value.Scale * 1000 + 0.5) WriteS16(value.Offset) end
+anyReads[18] = function() return UDim.new(ReadS16() / 1000, ReadS16()) end
+anyWrites.UDim = function(value: UDim) Allocate(5) WriteU8(18) WriteS16(value.Scale * 1000) WriteS16(value.Offset) end
 
-anyReads[18] = function() return UDim2.new(ReadS16() / 1000, ReadS16(), ReadS16() / 1000, ReadS16()) end
-anyWrites.UDim2 = function(value: UDim2) Allocate(9) WriteU8(18) WriteS16(value.X.Scale * 1000 + 0.5) WriteS16(value.X.Offset) WriteS16(value.Y.Scale * 1000 + 0.5) WriteS16(value.Y.Offset) end
+anyReads[19] = function() return UDim2.new(ReadS16() / 1000, ReadS16(), ReadS16() / 1000, ReadS16()) end
+anyWrites.UDim2 = function(value: UDim2) Allocate(9) WriteU8(19) WriteS16(value.X.Scale * 1000) WriteS16(value.X.Offset) WriteS16(value.Y.Scale * 1000) WriteS16(value.Y.Offset) end
 
-anyReads[19] = function() return Rect.new(ReadF32(), ReadF32(), ReadF32(), ReadF32()) end
-anyWrites.Rect = function(value: Rect) Allocate(17) WriteU8(19) WriteF32(value.Min.X) WriteF32(value.Min.Y) WriteF32(value.Max.X) WriteF32(value.Max.Y) end
+anyReads[20] = function() return Rect.new(ReadF32(), ReadF32(), ReadF32(), ReadF32()) end
+anyWrites.Rect = function(value: Rect) Allocate(17) WriteU8(20) WriteF32(value.Min.X) WriteF32(value.Min.Y) WriteF32(value.Max.X) WriteF32(value.Max.Y) end
 
-anyReads[20] = function() return Vector2.new(ReadF32(), ReadF32()) end
-anyWrites.Vector2 = function(value: Vector2) Allocate(9) WriteU8(20) WriteF32(value.X) WriteF32(value.Y) end
+anyReads[21] = function() return Vector2.new(ReadF32(), ReadF32()) end
+anyWrites.Vector2 = function(value: Vector2) Allocate(9) WriteU8(21) WriteF32(value.X) WriteF32(value.Y) end
 
-anyReads[21] = function() return Vector3.new(ReadF32(), ReadF32(), ReadF32()) end
-anyWrites.Vector3 = function(value: Vector3) Allocate(13) WriteU8(21) WriteF32(value.X) WriteF32(value.Y) WriteF32(value.Z) end
+anyReads[22] = function() return Vector3.new(ReadF32(), ReadF32(), ReadF32()) end
+anyWrites.Vector3 = function(value: Vector3) Allocate(13) WriteU8(22) WriteF32(value.X) WriteF32(value.Y) WriteF32(value.Z) end
 
-anyReads[22] = function()
+anyReads[23] = function()
 	return CFrame.fromEulerAnglesXYZ(ReadU16() / 10430.219195527361, ReadU16() / 10430.219195527361, ReadU16() / 10430.219195527361)
 		+ Vector3.new(ReadF32(), ReadF32(), ReadF32())
 end
 anyWrites.CFrame = function(value: CFrame)
 	local rx, ry, rz = value:ToEulerAnglesXYZ()
 	Allocate(19)
-	WriteU8(22)
+	WriteU8(23)
 	WriteU16(rx * 10430.219195527361 + 0.5) WriteU16(ry * 10430.219195527361 + 0.5) WriteU16(rz * 10430.219195527361 + 0.5)
 	WriteF32(value.X) WriteF32(value.Y) WriteF32(value.Z)
 end
 
-anyReads[23] = function()
+anyReads[24] = function()
 	return Region3.new(
 		Vector3.new(ReadF32(), ReadF32(), ReadF32()),
 		Vector3.new(ReadF32(), ReadF32(), ReadF32())
@@ -582,12 +614,12 @@ anyWrites.Region3 = function(value: Region3)
 	local minimum = value.CFrame.Position - halfSize
 	local maximum = value.CFrame.Position + halfSize
 	Allocate(25)
-	WriteU8(23)
+	WriteU8(24)
 	WriteF32(minimum.X) WriteF32(minimum.Y) WriteF32(minimum.Z)
 	WriteF32(maximum.X) WriteF32(maximum.Y) WriteF32(maximum.Z)
 end
 
-anyReads[24] = function()
+anyReads[25] = function()
 	local length = ReadU8()
 	local keypoints = table.create(length)
 	for index = 1, length do
@@ -598,14 +630,14 @@ end
 anyWrites.NumberSequence = function(value: NumberSequence)
 	local length = #value.Keypoints
 	Allocate(2 + length * 3)
-	WriteU8(24)
+	WriteU8(25)
 	WriteU8(length)
 	for index, keypoint in value.Keypoints do
 		WriteU8(keypoint.Time * 255 + 0.5) WriteU8(keypoint.Value * 255 + 0.5) WriteU8(keypoint.Envelope * 255 + 0.5)
 	end
 end
 
-anyReads[25] = function()
+anyReads[26] = function()
 	local length = ReadU8()
 	local keypoints = table.create(length)
 	for index = 1, length do
@@ -616,7 +648,7 @@ end
 anyWrites.ColorSequence = function(value: ColorSequence)
 	local length = #value.Keypoints
 	Allocate(2 + length * 4)
-	WriteU8(25)
+	WriteU8(26)
 	WriteU8(length)
 	for index, keypoint in value.Keypoints do
 		WriteU8(keypoint.Time * 255 + 0.5)
@@ -624,37 +656,33 @@ anyWrites.ColorSequence = function(value: ColorSequence)
 	end
 end
 
-anyReads[26] = function()
+anyReads[27] = function()
 	local bitOffset = bufferOffset * 8
 	bufferOffset += 3
 	return enums[buffer.readbits(activeBuffer, bitOffset + 0, 12)]:FromValue(buffer.readbits(activeBuffer, bitOffset + 12, 12))
 end
 anyWrites.EnumItem = function(value: EnumItem)
 	Allocate(4)
-	WriteU8(26)
+	WriteU8(27)
 	local bitOffset = bufferOffset * 8
 	bufferOffset += 3
 	buffer.writebits(activeBuffer, bitOffset + 0, 12, enumIndices[value.EnumType])
 	buffer.writebits(activeBuffer, bitOffset + 12, 12, value.Value)
 end
 
-anyReads[27] = function()
+anyReads[28] = function()
 	local value = {}
-	for index = 1, ReadU16() do value[anyReads[ReadU8()]()] = anyReads[ReadU8()]() end
-	return value
+	while true do
+		local typeId = ReadU8()
+		if typeId == 0 then return value else value[anyReads[typeId]()] = anyReads[ReadU8()]() end
+	end
 end
 anyWrites.table = function(value: {[any]: any})
-	Allocate(3)
-	WriteU8(27)
-	local lengthOffset = bufferOffset
-	bufferOffset += 2
-	local length = 0
-	for index, value in value do
-		anyWrites[typeof(index)](index)
-		anyWrites[typeof(value)](value)
-		length += 1
-	end
-	buffer.writeu16(activeBuffer, lengthOffset, length)
+	Allocate(1)
+	WriteU8(28)
+	for index, value in value do anyWrites[typeof(index)](index) anyWrites[typeof(value)](value) end
+	Allocate(1)
+	WriteU8(0)
 end
 
 

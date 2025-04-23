@@ -358,7 +358,7 @@ else
 	RunService.Heartbeat:Connect(function(deltaTime)
 		totalTime += deltaTime
 		if totalTime > 0.016666666666666666 then
-			totalTime -= 0.016666666666666666
+			totalTime %= 0.016666666666666666
 			task.defer(thread)
 		end
 	end)
