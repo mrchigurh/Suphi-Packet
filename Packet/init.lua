@@ -80,16 +80,25 @@ function Packet:Response(...)
 end
 
 function Packet:Fire(...)
-	Import(cursor)
-	WriteU8(self.Id)
 	if self.ResponseReads then
+		if RunService:IsServer() then error("You must use FireClient(player)", 2) end
+		local responseThread
+		for i = 1, 128 do
+			responseThread = threads[threads.Index]
+			if responseThread then threads.Index = (threads.Index + 1) % 128 else break end
+		end
+		if responseThread then error("Cannot have more than 128 yielded threads", 2) end
+		Import(cursor)
+		WriteU8(self.Id)
 		WriteU8(threads.Index)
-		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, coroutine.running(), self.ResponseTimeoutValue)}
+		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue)}
 		threads.Index = (threads.Index + 1) % 128
 		WriteParameters(self.Writes, {...})
 		cursor = Export()
 		return coroutine.yield()
 	else
+		Import(cursor)
+		WriteU8(self.Id)
 		WriteParameters(self.Writes, {...})
 		cursor = Export()
 	end
@@ -97,18 +106,26 @@ end
 
 function Packet:FireClient(player, ...)
 	if player.Parent == nil then return end
-	Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
-	WriteU8(self.Id)
 	if self.ResponseReads then
 		local threads = playerThreads[player]
 		if threads == nil then threads = {Index = 0} playerThreads[player] = threads end
+		local responseThread
+		for i = 1, 128 do
+			responseThread = threads[threads.Index]
+			if responseThread then threads.Index = (threads.Index + 1) % 128 else break end
+		end
+		if responseThread then error("Cannot have more than 128 yielded threads", 2) return end
+		Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
+		WriteU8(self.Id)
 		WriteU8(threads.Index)
-		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, coroutine.running(), self.ResponseTimeoutValue)}
+		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue)}
 		threads.Index = (threads.Index + 1) % 128
 		WriteParameters(self.Writes, {...})
 		playerCursors[player] = Export()
 		return coroutine.yield()
 	else
+		Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
+		WriteU8(self.Id)
 		WriteParameters(self.Writes, {...})
 		playerCursors[player] = Export()
 	end
@@ -192,8 +209,10 @@ function WriteParameters(writes: {(any) -> ()}, values: {any})
 	for index, func in writes do func(values[index]) end
 end
 
-function Timeout(thread: thread, value: any)
-	task.defer(thread, value)
+function Timeout(threads: {[number]: {Yielded: thread, Timeout: thread}, Index: number}, threadIndex: number, value: any)
+	local responseThreads = threads[threadIndex]
+	task.defer(responseThreads.Yielded, value)
+	threads[threadIndex] = nil
 end
 
 
@@ -259,10 +278,10 @@ if RunService:IsServer() then
 					Task:Defer(respond, packet, player, threadIndex, ReadParameters(packet.Reads))
 				else
 					threadIndex -= 128
-					local threads = playerThreads[player][threadIndex]
-					if threads then
-						task.cancel(threads.Timeout)
-						task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
+					local responseThreads = playerThreads[player][threadIndex]
+					if responseThreads then
+						task.cancel(responseThreads.Timeout)
+						task.defer(responseThreads.Yielded, ReadParameters(packet.ResponseReads))
 						playerThreads[player][threadIndex] = nil
 					elseif RunService:IsStudio() then
 						warn("Response thread not found for packet:", packet.Name, "discarding response:", ReadParameters(packet.ResponseReads))
@@ -331,10 +350,10 @@ else
 					Task:Defer(respond, packet, threadIndex, ReadParameters(packet.Reads))
 				else
 					threadIndex -= 128
-					local threads = threads[threadIndex]
-					if threads then
-						task.cancel(threads.Timeout)
-						task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
+					local responseThreads = threads[threadIndex]
+					if responseThreads then
+						task.cancel(responseThreads.Timeout)
+						task.defer(responseThreads.Yielded, ReadParameters(packet.ResponseReads))
 						threads[threadIndex] = nil
 					else
 						warn("Response thread not found for packet:", packet.Name, "discarding response:", ReadParameters(packet.ResponseReads))
